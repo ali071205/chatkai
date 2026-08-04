@@ -1,45 +1,33 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import React from 'react';
+import { Text, TextInput } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Provider } from 'react-redux';
+import { store } from './src/store/store';
+import RootNavigator from './src/navigation/RootNavigator';
+import { fonts } from './src/theme/typography';
 
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+const applyDefaultFont = (Component: typeof Text | typeof TextInput) => {
+  const componentWithDefaults = Component as typeof Component & {
+    defaultProps?: { style?: unknown };
+  };
+  componentWithDefaults.defaultProps = componentWithDefaults.defaultProps || {};
+  componentWithDefaults.defaultProps.style = [
+    componentWithDefaults.defaultProps.style,
+    { fontFamily: fonts.cabinetRegular },
+  ];
+};
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+applyDefaultFont(Text);
+applyDefaultFont(TextInput);
 
+const App = () => {
   return (
-    <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
-    </SafeAreaProvider>
+    <Provider store={store}>
+      <SafeAreaProvider>
+        <RootNavigator />
+      </SafeAreaProvider>
+    </Provider>
   );
-}
-
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
-
-  return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
+};
 
 export default App;
