@@ -76,3 +76,28 @@ backend/.env
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Backend
+backend/venv/
+backend/__pycache__/
+backend/.env
+backend/nova.db
+
+# Secrets, local databases, logs, and generated artifacts
+**/.env
+**/.env.*
+!**/.env.example
+*.db
+*.sqlite
+*.sqlite3
+logs/
+.server-logs/
+tmp/
+.bundle/
+*.log
+*.pem
+*.p12
+*.jks
+*.keystore
+secrets.*
+credentials.*
