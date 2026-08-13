@@ -65,8 +65,8 @@ type RealtimePayload = {
   message?: Message | string | PaymentErrorPayload;
 };
 
-const KEYBOARD_INPUT_GAP = 10;
 const DEFAULT_COMPOSER_HEIGHT = 118;
+const KEYBOARD_COMPOSER_GAP = 10;
 const AUTO_SCROLL_THRESHOLD = 120;
 const STREAM_SCROLL_THROTTLE_MS = 120;
 
@@ -186,10 +186,10 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [composerHeight, setComposerHeight] = useState(DEFAULT_COMPOSER_HEIGHT);
   const messages = useAppSelector(state => state.chat.messages);
-  const keyboardAwareBottom = Platform.OS === 'android' && keyboardHeight > 0
-    ? keyboardHeight + KEYBOARD_INPUT_GAP
+  const keyboardBottomOffset = Platform.OS === 'android' && keyboardHeight > 0
+    ? keyboardHeight + KEYBOARD_COMPOSER_GAP
     : 0;
-  const composerBottomInset = composerHeight + keyboardAwareBottom + 28;
+  const composerBottomInset = composerHeight + keyboardBottomOffset + 28;
   const dispatch = useAppDispatch();
   const flatListRef = useRef<FlatList<Message>>(null);
   const websocketRef = useRef<WebSocket | null>(null);
@@ -200,6 +200,8 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   const isWaitingForFirstChunkRef = useRef(false);
   const messageIdsRef = useRef<Set<string>>(new Set());
   const isUserNearBottomRef = useRef(true);
+  const isFollowingLatestRef = useRef(true);
+  const isUserDraggingRef = useRef(false);
   const didInitialScrollRef = useRef(false);
   const isComposerFocusedRef = useRef(false);
   const streamScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -237,13 +239,14 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
 
   const startFollowingLatestMessages = React.useCallback((animated = true) => {
     isUserNearBottomRef.current = true;
+    isFollowingLatestRef.current = true;
     setShowScrollToLatest(false);
     scrollToBottom(animated);
   }, [scrollToBottom]);
 
   const scheduleStreamAutoScroll = React.useCallback(() => {
     if (
-      !isUserNearBottomRef.current
+      !isFollowingLatestRef.current
       || isProgrammaticScrollRef.current
       || streamScrollTimerRef.current
     ) {
@@ -254,7 +257,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     const delay = Math.max(0, STREAM_SCROLL_THROTTLE_MS - elapsed);
     streamScrollTimerRef.current = setTimeout(() => {
       streamScrollTimerRef.current = null;
-      if (!isUserNearBottomRef.current) {
+      if (!isFollowingLatestRef.current) {
         return;
       }
 
@@ -321,6 +324,9 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
 
     if (isNearBottom) {
       isProgrammaticScrollRef.current = false;
+      isFollowingLatestRef.current = true;
+    } else if (isUserDraggingRef.current) {
+      isFollowingLatestRef.current = false;
     }
     updateNearBottom(isNearBottom);
   }, [updateNearBottom]);
@@ -330,6 +336,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   }, [scheduleStreamAutoScroll]);
 
   const handleScrollBeginDrag = React.useCallback(() => {
+    isUserDraggingRef.current = true;
     isProgrammaticScrollRef.current = false;
     if (programmaticScrollTimerRef.current) {
       clearTimeout(programmaticScrollTimerRef.current);
@@ -337,6 +344,15 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     }
     cancelPendingStreamScroll();
   }, [cancelPendingStreamScroll]);
+
+  const handleScrollEndDrag = React.useCallback(() => {
+    isUserDraggingRef.current = false;
+  }, []);
+
+  const handleMomentumScrollEnd = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    isUserDraggingRef.current = false;
+    handleChatScroll(event);
+  }, [handleChatScroll]);
 
   useEffect(() => {
     const restoreSelectedModel = async () => {
@@ -364,8 +380,10 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   }, [navigation]);
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
-      setKeyboardHeight(event.endCoordinates.height);
+    const showSubscription = Keyboard.addListener('keyboardDidShow', event => {
+      if (Platform.OS === 'android') {
+        setKeyboardHeight(event.endCoordinates.height);
+      }
       if (isComposerFocusedRef.current) {
         startFollowingLatestMessages(true);
       }
@@ -691,9 +709,16 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
       actionUrl={item.actionUrl}
       onActionPress={handleOpenPayment}
       onRetry={handleRetryMessage}
-      onRevealProgress={scheduleStreamAutoScroll}
     />
-  ), [handleOpenPayment, handleRetryMessage, scheduleStreamAutoScroll]);
+  ), [handleOpenPayment, handleRetryMessage]);
+
+  const keyExtractor = React.useCallback((item: Message) => item.id, []);
+
+  const handleListLayout = React.useCallback(() => {
+    if (!didInitialScrollRef.current) {
+      scrollToBottom(false);
+    }
+  }, [scrollToBottom]);
 
   const listContentStyle = React.useMemo(() => [
     styles.listContent,
@@ -704,10 +729,8 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
 
   const inputContainerStyle = React.useMemo(() => [
     styles.inputContainer,
-    keyboardAwareBottom > 0
-      ? { bottom: keyboardAwareBottom }
-      : styles.inputContainerResting,
-  ], [keyboardAwareBottom]);
+    keyboardBottomOffset > 0 && { bottom: keyboardBottomOffset },
+  ], [keyboardBottomOffset]);
 
   useEffect(() => {
     if (!loadingHistory && !didInitialScrollRef.current) {
@@ -722,7 +745,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
         scrollToBottom(false);
       }
     }
-  }, [composerHeight, keyboardAwareBottom, loadingHistory, scrollToBottom]);
+  }, [composerHeight, keyboardBottomOffset, loadingHistory, scrollToBottom]);
 
   useEffect(() => () => {
     cancelPendingStreamScroll();
@@ -775,24 +798,24 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
           <FlatList<Message>
             ref={flatListRef}
             data={messages}
-            keyExtractor={(item) => item.id}
+            keyExtractor={keyExtractor}
             renderItem={renderMessageItem}
             contentContainerStyle={listContentStyle}
             onContentSizeChange={handleContentSizeChange}
-            onLayout={() => {
-              if (!didInitialScrollRef.current) {
-                scrollToBottom(false);
-              }
-            }}
+            onLayout={handleListLayout}
             onScroll={handleChatScroll}
             onScrollBeginDrag={handleScrollBeginDrag}
+            onScrollEndDrag={handleScrollEndDrag}
+            onMomentumScrollEnd={handleMomentumScrollEnd}
             scrollEventThrottle={16}
+            decelerationRate="normal"
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            initialNumToRender={20}
-            maxToRenderPerBatch={10}
-            windowSize={7}
-            removeClippedSubviews={false}
+            initialNumToRender={14}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={40}
+            windowSize={9}
+            removeClippedSubviews={Platform.OS === 'android'}
           />
         )}
 

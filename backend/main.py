@@ -3,7 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 from database import SessionLocal, User, Message, Subscription, Base, engine
+from realtime import RedisChannel
 import base64
 import asyncio
 import hashlib
@@ -17,10 +22,7 @@ import urllib.request
 import secrets
 from datetime import datetime, timedelta
 from typing import List, Optional
-from dotenv import load_dotenv
 from fastapi import FastAPI
-
-load_dotenv(override=True)
 
 Base.metadata.create_all(bind=engine)
 
@@ -43,6 +45,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "service": "nova-backend",
+        "ai_provider": AI_PROVIDER,
+        "realtime_active": True,
+        "redis_enabled": manager.redis.enabled,
+        "redis_connected": manager.redis.connected,
+    }
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -711,6 +725,17 @@ def create_chat_turn(
 class ConnectionManager:
     def __init__(self):
         self.active_connections: dict[int, set[WebSocket]] = {}
+        self.redis = RedisChannel(
+            redis_url=os.getenv("REDIS_URL"),
+            channel_name=os.getenv("REDIS_CHANNEL", "nova:realtime"),
+            payload_handler=self.send_local,
+        )
+
+    async def start(self):
+        await self.redis.start()
+
+    async def stop(self):
+        await self.redis.stop()
 
     async def connect(self, user_id: int, websocket: WebSocket):
         await websocket.accept()
@@ -724,7 +749,7 @@ class ConnectionManager:
         if not connections:
             self.active_connections.pop(user_id, None)
 
-    async def send_to_user(self, user_id: int, payload: dict):
+    async def send_local(self, user_id: int, payload: dict):
         disconnected = []
         for websocket in self.active_connections.get(user_id, set()).copy():
             try:
@@ -734,8 +759,22 @@ class ConnectionManager:
         for websocket in disconnected:
             self.disconnect(user_id, websocket)
 
+    async def send_to_user(self, user_id: int, payload: dict):
+        await self.send_local(user_id, payload)
+        await self.redis.publish(user_id, payload)
+
 
 manager = ConnectionManager()
+
+
+@app.on_event("startup")
+async def start_realtime_channel():
+    await manager.start()
+
+
+@app.on_event("shutdown")
+async def stop_realtime_channel():
+    await manager.stop()
 
 
 @app.get("/")
@@ -746,6 +785,8 @@ def read_root():
         "gemini_active": genai_client is not None or legacy_genai is not None,
         "groq_active": bool(GROQ_API_KEY),
         "realtime_active": True,
+        "redis_enabled": manager.redis.enabled,
+        "redis_connected": manager.redis.connected,
     }
 
 

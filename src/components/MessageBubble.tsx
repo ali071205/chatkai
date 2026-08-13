@@ -17,17 +17,12 @@ interface MessageBubbleProps {
   actionUrl?: string;
   onActionPress?: (url?: string) => void;
   onRetry?: (messageId: string, prompt?: string) => void;
-  onRevealProgress?: () => void;
 }
-
-const TYPEWRITER_WINDOW_MS = 15000;
-const TYPEWRITER_WORD_DELAY_MS = 45;
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({
   id,
   text,
   sender,
-  timestamp,
   status,
   error,
   retryPrompt,
@@ -35,13 +30,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   actionUrl,
   onActionPress,
   onRetry,
-  onRevealProgress,
 }) => {
   const isUser = sender === 'user';
   const [isLiked, setLiked] = React.useState(false);
-  const shouldTypewriterAnimate = !isUser && !status && Date.now() - timestamp < TYPEWRITER_WINDOW_MS;
-  const [visibleText, setVisibleText] = React.useState(shouldTypewriterAnimate ? '' : text);
-  const displayText = status === 'streaming' ? text : visibleText;
+  const displayText = text;
   const messageFontStyle = containsIndicScript(displayText)
     ? { fontFamily: fonts.teko }
     : font.regular;
@@ -76,35 +68,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     opacity,
     transform: [{ translateY }, { scale }],
   }), [opacity, scale, translateY]);
-
-  React.useEffect(() => {
-    if (status === 'streaming') {
-      return undefined;
-    }
-
-    if (!shouldTypewriterAnimate) {
-      setVisibleText(text);
-      return undefined;
-    }
-
-    const words = text.split(/(\s+)/);
-    let currentIndex = 0;
-    setVisibleText('');
-
-    const interval = setInterval(() => {
-      currentIndex += 1;
-      setVisibleText(words.slice(0, currentIndex).join(''));
-      if (currentIndex % 4 === 0 || currentIndex >= words.length) {
-        onRevealProgress?.();
-      }
-
-      if (currentIndex >= words.length) {
-        clearInterval(interval);
-      }
-    }, TYPEWRITER_WORD_DELAY_MS);
-
-    return () => clearInterval(interval);
-  }, [onRevealProgress, shouldTypewriterAnimate, status, text]);
 
   const handleCopy = React.useCallback(() => {
     Clipboard.setString(displayText);

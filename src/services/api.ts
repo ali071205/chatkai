@@ -2,11 +2,15 @@ import axios from 'axios';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const ANDROID_HOST = '10.249.229.29';
-
-export const API_BASE_URL = Platform.OS === 'android'
-  ? `http://${ANDROID_HOST}:8010`
+const PRODUCTION_API_URL = 'https://chatkai-87ds.onrender.com';
+const LOCAL_ANDROID_HOST = '127.0.0.1';
+const FALLBACK_API_URL = Platform.OS === 'android'
+  ? `http://${LOCAL_ANDROID_HOST}:8010`
   : 'http://localhost:8010';
+
+const runtimeApiUrl = (globalThis as typeof globalThis & { __NOVA_API_URL__?: string }).__NOVA_API_URL__;
+
+export const API_BASE_URL = runtimeApiUrl || PRODUCTION_API_URL || FALLBACK_API_URL;
 
 let inMemoryToken: string | null = null;
 
