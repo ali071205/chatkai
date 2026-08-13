@@ -1,9 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, Platform, Animated, Easing, TouchableOpacity, Share, Alert } from 'react-native';
+import { View, Text, StyleSheet, Platform, Animated, Easing, TouchableOpacity, Share } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Tts from 'react-native-tts';
 import LinearGradient from 'react-native-linear-gradient';
-import { ArrowUpRight, Copy, DotsThreeVertical, SpeakerHigh, ThumbsUp } from './icons';
+import { ArrowUpRight, Copy, SpeakerHigh, ThumbsUp } from './icons';
 import { containsIndicScript, font, fonts } from '../theme/typography';
 
 interface MessageBubbleProps {
@@ -89,14 +89,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     Tts.setDefaultRate(0.48, true);
     Tts.speak(displayText.replace(/[`*_>#-]/g, ''));
   }, [displayText]);
-
-  const handleMoreActions = React.useCallback(() => {
-    Alert.alert('Message actions', 'Choose what you want to do with this response.', [
-      { text: 'Copy', onPress: handleCopy },
-      { text: 'Share', onPress: handleShare },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }, [handleCopy, handleShare]);
 
   const renderFormattedText = (rawText: string, key: string) => {
     const segments = rawText.split(/(\*\*[\s\S]*?\*\*)/g);
@@ -218,9 +210,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             </TouchableOpacity>
             <TouchableOpacity style={styles.aiActionButton} onPress={handleShare}>
               <ArrowUpRight size={18} color="#CFE8D8" weight="regular" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.aiActionButton} onPress={handleMoreActions}>
-              <DotsThreeVertical size={18} color="#CFE8D8" weight="bold" />
             </TouchableOpacity>
           </View>
         )}
