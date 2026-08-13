@@ -1,4 +1,10 @@
 services:
+  - type: keyvalue
+    name: nova-redis
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+
   - type: web
     name: nova-backend
     env: python
@@ -23,7 +29,10 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: nova-redis
+          property: connectionString
       - key: REDIS_CHANNEL
         value: nova:realtime
       - key: ALLOWED_ORIGINS

@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from database import SessionLocal, User, Message, Subscription, Conversation, Base, engine
+from realtime import RedisChannel
 import base64
 import asyncio
 import hashlib
@@ -53,8 +54,8 @@ def health_check():
         "service": "nova-backend",
         "ai_provider": AI_PROVIDER,
         "realtime_active": True,
-        "redis_enabled": False,
-        "redis_connected": False,
+        "redis_enabled": redis_channel.enabled,
+        "redis_connected": redis_channel.connected,
     }
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -799,9 +800,25 @@ class ConnectionManager:
 
     async def send_to_user(self, user_id: int, payload: dict):
         await self.send_local(user_id, payload)
+        await redis_channel.publish(user_id, payload)
 
 
 manager = ConnectionManager()
+redis_channel = RedisChannel(
+    os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+    os.getenv("REDIS_CHANNEL", "nova:realtime"),
+    manager.send_local,
+)
+
+
+@app.on_event("startup")
+async def start_redis_channel():
+    await redis_channel.start()
+
+
+@app.on_event("shutdown")
+async def stop_redis_channel():
+    await redis_channel.stop()
 
 
 @app.get("/")
@@ -812,8 +829,8 @@ def read_root():
         "gemini_active": genai_client is not None or legacy_genai is not None,
         "groq_active": bool(GROQ_API_KEY),
         "realtime_active": True,
-        "redis_enabled": False,
-        "redis_connected": False,
+        "redis_enabled": redis_channel.enabled,
+        "redis_connected": redis_channel.connected,
     }
 
 
