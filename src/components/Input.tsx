@@ -13,7 +13,7 @@ const Input: React.FC<InputProps> = ({ label, error, ...props }) => {
       <Text style={styles.label}>{label}</Text>
       <TextInput
         style={[styles.input, error && styles.inputError]}
-        placeholderTextColor="#777777"
+        placeholderTextColor="#68877A"
         {...props}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -29,14 +29,14 @@ const styles = StyleSheet.create({
   label: {
     ...font.bold,
     fontSize: 13,
-    color: '#D4D4D4',
+    color: '#E7F5EE',
     marginBottom: 8,
   },
   input: {
     ...font.regular,
-    backgroundColor: '#111111',
-    borderWidth: 1,
-    borderColor: '#333333',
+    backgroundColor: 'rgba(2, 20, 15, 0.78)',
+    borderWidth: 0,
+    borderColor: '#27966A',
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,

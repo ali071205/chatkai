@@ -58,17 +58,19 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   primary: {
-    backgroundColor: '#F5F5F5',
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.08,
+    backgroundColor: '#238B5B',
+    borderWidth: 0,
+    borderColor: '#5EE6AA',
+    shadowColor: '#34D399',
+    shadowOpacity: 0.28,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 8 },
     elevation: 7,
   },
   secondary: {
-    backgroundColor: '#121212',
-    borderWidth: 1,
-    borderColor: '#343434',
+    backgroundColor: 'rgba(2, 20, 15, 0.72)',
+    borderWidth: 0,
+    borderColor: '#27966A',
   },
   disabled: {
     opacity: 0.55,
@@ -78,7 +80,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   textPrimary: {
-    color: '#0A0A0A',
+    color: '#F4FFF9',
   },
   textSecondary: {
     color: '#F5F5F5',

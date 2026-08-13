@@ -1,5 +1,7 @@
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
+import Svg, { Path } from 'react-native-svg';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import axios from 'axios';
 import RazorpayCheckout, { RazorpayPaymentError } from 'react-native-razorpay';
@@ -153,6 +155,11 @@ const BillingScreen: React.FC<Props> = () => {
 
   return (
     <View style={styles.container}>
+      <LinearGradient pointerEvents="none" colors={['rgba(52,199,122,0.14)', 'rgba(2,10,8,0)']} style={styles.topGlow} />
+      <Svg pointerEvents="none" width="100%" height="100%" viewBox="0 0 420 840" style={StyleSheet.absoluteFill}>
+        <Path d="M-130 620 Q80 430 270 570 T580 470" stroke="#34C77A" strokeOpacity={0.08} strokeWidth={48} fill="none" />
+        <Path d="M80 880 Q250 610 490 500" stroke="#34C77A" strokeOpacity={0.16} strokeWidth={1} fill="none" />
+      </Svg>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.eyebrow}>NOVA MEMBERSHIP</Text>
         <Text style={styles.title}>Choose your plan</Text>
@@ -162,26 +169,34 @@ const BillingScreen: React.FC<Props> = () => {
 
         {isTestMode && (
           <View style={styles.testModeBanner}>
-            <Text style={styles.testModeText}>Test Mode — no real money is charged.</Text>
+            <View style={styles.testDot} />
+            <Text style={styles.testModeText}>Test mode — no real money is charged</Text>
           </View>
         )}
 
         {activeSubscription && (
-          <View style={styles.activePlanCard}>
-            <CheckSquare size={22} color="#0A0A0A" weight="fill" />
+          <LinearGradient colors={['#A7F3D0', '#52D99A']} style={styles.activePlanCard}>
+            <CheckSquare size={22} color="#062016" weight="fill" />
             <View style={styles.activePlanCopy}>
               <Text style={styles.activePlanTitle}>{activeSubscription.planName} active</Text>
               <Text style={styles.activePlanText}>{formatExpiry(activeSubscription.expiresAt)}</Text>
             </View>
-          </View>
+          </LinearGradient>
         )}
 
         <View style={styles.planList}>
+          {isLoading && <ActivityIndicator size="large" color="#34C77A" />}
           {plans.map(plan => {
             const isActive = activeSubscription?.planId === plan.id;
             const isProcessing = processingPlanId === plan.id;
             return (
-              <View key={plan.id} style={[styles.planCard, isActive && styles.planCardActive]}>
+              <LinearGradient
+                key={plan.id}
+                colors={isActive ? ['rgba(24,92,61,0.97)', 'rgba(9,38,27,0.99)'] : ['rgba(17,37,28,0.97)', 'rgba(6,20,15,0.99)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.planCard, isActive && styles.planCardActive]}
+              >
                 <View style={styles.planHeader}>
                   <View>
                     <Text style={styles.planName}>{plan.name}</Text>
@@ -202,11 +217,13 @@ const BillingScreen: React.FC<Props> = () => {
                   disabled={isLoading || Boolean(processingPlanId) || isActive}
                   onPress={() => handlePurchase(plan)}
                 >
-                  <Text style={[styles.planButtonText, isActive && styles.planButtonTextActive]}>
-                    {isActive ? 'Current plan' : isProcessing ? 'Opening checkout...' : `Choose ${plan.name}`}
-                  </Text>
+                  {isProcessing ? <ActivityIndicator color="#062016" /> : (
+                    <Text style={[styles.planButtonText, isActive && styles.planButtonTextActive]}>
+                      {isActive ? 'Current plan' : `Choose ${plan.name}`}
+                    </Text>
+                  )}
                 </TouchableOpacity>
-              </View>
+              </LinearGradient>
             );
           })}
         </View>
@@ -218,29 +235,36 @@ const BillingScreen: React.FC<Props> = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#020A08',
+  },
+  topGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 380,
   },
   content: {
     paddingHorizontal: 22,
-    paddingTop: 28,
-    paddingBottom: 40,
+    paddingTop: 34,
+    paddingBottom: 56,
   },
   eyebrow: {
     ...font.bold,
-    color: '#A3A3A3',
+    color: '#65B893',
     fontSize: 12,
     letterSpacing: 1.2,
   },
   title: {
     ...font.black,
     color: '#F8FAFC',
-    fontSize: 32,
-    lineHeight: 38,
+    fontSize: 36,
+    lineHeight: 42,
     marginTop: 8,
   },
   subtitle: {
     ...font.regular,
-    color: '#A3A3A3',
+    color: '#91A89D',
     fontSize: 15,
     lineHeight: 22,
     marginTop: 10,
@@ -250,20 +274,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 11,
     borderRadius: 16,
-    backgroundColor: '#1F1F1F',
-    borderWidth: 1,
-    borderColor: '#3A3A3A',
+    backgroundColor: 'rgba(13,45,33,0.78)',
+    borderWidth: 0,
+    borderColor: 'rgba(52,199,122,0.28)',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  testDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#34C77A',
+    marginRight: 9,
   },
   testModeText: {
     ...font.bold,
-    color: '#F5F5F5',
+    color: '#DDF8E9',
     fontSize: 13,
   },
   activePlanCard: {
     marginTop: 20,
     padding: 16,
     borderRadius: 20,
-    backgroundColor: '#F5F5F5',
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -272,12 +304,12 @@ const styles = StyleSheet.create({
   },
   activePlanTitle: {
     ...font.black,
-    color: '#0A0A0A',
+    color: '#062016',
     fontSize: 15,
   },
   activePlanText: {
     ...font.regular,
-    color: '#4A4A4A',
+    color: '#315B48',
     fontSize: 12,
     marginTop: 2,
   },
@@ -285,15 +317,19 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   planCard: {
-    padding: 18,
-    borderRadius: 24,
-    backgroundColor: '#121212',
-    borderWidth: 1,
-    borderColor: '#303030',
-    marginBottom: 14,
+    padding: 20,
+    borderRadius: 26,
+    borderWidth: 0,
+    borderColor: 'rgba(92,218,153,0.18)',
+    marginBottom: 16,
+    shadowColor: '#000000',
+    shadowOpacity: 0.32,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
   },
   planCardActive: {
-    borderColor: '#F5F5F5',
+    borderColor: '#34C77A',
   },
   planHeader: {
     flexDirection: 'row',
@@ -307,7 +343,7 @@ const styles = StyleSheet.create({
   },
   planCycle: {
     ...font.medium,
-    color: '#A3A3A3',
+    color: '#83A494',
     fontSize: 13,
     marginTop: 2,
   },
@@ -318,29 +354,29 @@ const styles = StyleSheet.create({
   },
   planDescription: {
     ...font.regular,
-    color: '#B8B8B8',
+    color: '#A7B9B0',
     fontSize: 14,
     lineHeight: 21,
     marginTop: 18,
   },
   planButton: {
-    minHeight: 46,
+    minHeight: 50,
     marginTop: 18,
     borderRadius: 23,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
   },
   planButtonActive: {
-    backgroundColor: '#2A2A2A',
+    backgroundColor: 'rgba(52,199,122,0.16)',
   },
   planButtonText: {
     ...font.black,
-    color: '#0A0A0A',
+    color: '#062016',
     fontSize: 14,
   },
   planButtonTextActive: {
-    color: '#A3A3A3',
+    color: '#8BD6B2',
   },
 });
 

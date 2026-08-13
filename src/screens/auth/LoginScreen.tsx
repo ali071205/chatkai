@@ -61,7 +61,8 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.orbTwo} />
 
         <View style={styles.logoMark}>
-          <Text style={styles.logoText}>N</Text>
+          <Text style={styles.logoText}>NOVA</Text>
+          <View style={styles.logoDot} />
         </View>
 
         <View style={styles.card}>
@@ -108,7 +109,7 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#010907',
   },
   container: {
     flex: 1,
@@ -122,7 +123,7 @@ const styles = StyleSheet.create({
     width: 190,
     height: 190,
     borderRadius: 95,
-    backgroundColor: 'rgba(255, 255, 255, 0.045)',
+    backgroundColor: 'rgba(0, 117, 75, 0.16)',
   },
   orbTwo: {
     position: 'absolute',
@@ -131,15 +132,10 @@ const styles = StyleSheet.create({
     width: 230,
     height: 230,
     borderRadius: 115,
-    backgroundColor: 'rgba(255, 255, 255, 0.035)',
+    backgroundColor: 'rgba(0, 117, 75, 0.12)',
   },
   logoMark: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
-    backgroundColor: '#F5F5F5',
-    borderWidth: 1,
-    borderColor: '#F5F5F5',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'center',
@@ -147,24 +143,32 @@ const styles = StyleSheet.create({
   },
   logoText: {
     ...font.black,
-    color: '#061018',
-    fontSize: 28,
+    color: '#F8FAFC',
+    fontSize: 27,
+    letterSpacing: 5,
+  },
+  logoDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    marginLeft: 10,
+    backgroundColor: '#34D399',
   },
   card: {
     padding: 22,
     borderRadius: 30,
-    backgroundColor: '#101010',
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    shadowColor: '#000',
-    shadowOpacity: 0.32,
+    backgroundColor: 'rgba(3, 24, 18, 0.92)',
+    borderWidth: 0,
+    borderColor: '#39D996',
+    shadowColor: '#34D399',
+    shadowOpacity: 0.18,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
   },
   eyebrow: {
     ...font.black,
-    color: '#F5F5F5',
+    color: '#4ADEA2',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 1.1,
@@ -188,7 +192,7 @@ const styles = StyleSheet.create({
     ...font.bold,
     color: '#F5F5F5',
     backgroundColor: '#181818',
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#3A3A3A',
     borderRadius: 16,
     paddingHorizontal: 12,

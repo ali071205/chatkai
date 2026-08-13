@@ -17,15 +17,8 @@ interface ChatState {
   isTyping: boolean;
 }
 
-const defaultWelcomeMessage: Message = {
-  id: 'welcome',
-  text: 'Hi there! I am NOVA, your AI Personal Assistant. How can I help you today?',
-  sender: 'ai',
-  timestamp: Date.now(),
-};
-
 const initialState: ChatState = {
-  messages: [defaultWelcomeMessage],
+  messages: [],
   isTyping: false,
 };
 
@@ -34,11 +27,7 @@ const chatSlice = createSlice({
   initialState,
   reducers: {
     setMessages: (state, action: PayloadAction<Message[]>) => {
-      if (action.payload && action.payload.length > 0) {
-        state.messages = action.payload;
-      } else {
-        state.messages = [defaultWelcomeMessage];
-      }
+      state.messages = action.payload || [];
     },
     addMessage: (state, action: PayloadAction<Message>) => {
       state.messages.push(action.payload);
@@ -83,7 +72,7 @@ const chatSlice = createSlice({
       state.isTyping = action.payload;
     },
     clearChat: (state) => {
-      state.messages = [defaultWelcomeMessage];
+      state.messages = [];
     }
   },
 });

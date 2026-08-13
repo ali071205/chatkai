@@ -5,6 +5,8 @@ import { parseSseBuffer, ParsedSseEvent } from './sseParser';
 export type StreamStartData = {
   message_id?: string;
   user_message_id?: string;
+  conversation_id?: string;
+  conversation_title?: string;
 };
 
 export type StreamDoneData = {
@@ -25,6 +27,7 @@ export type StreamErrorData = {
 
 export type StreamChatParams = {
   message: string;
+  conversationId?: string | null;
   model?: string;
   signal?: AbortSignal;
   onStart?: (data: StreamStartData) => void;
@@ -95,6 +98,7 @@ export const handleParsedSseEvent = (
 
 export const streamChat = async ({
   message,
+  conversationId,
   model,
   signal,
   onStart,
@@ -223,6 +227,6 @@ export const streamChat = async ({
     };
 
     signal?.addEventListener?.('abort', abortRequest);
-    xhr.send(JSON.stringify({ message, model }));
+    xhr.send(JSON.stringify({ message, model, conversation_id: conversationId }));
   });
 };

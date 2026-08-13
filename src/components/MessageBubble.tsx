@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Platform, Animated, Easing, TouchableOpacity, Share, Alert } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Tts from 'react-native-tts';
+import LinearGradient from 'react-native-linear-gradient';
 import { ArrowUpRight, Copy, DotsThreeVertical, SpeakerHigh, ThumbsUp } from './icons';
 import { containsIndicScript, font, fonts } from '../theme/typography';
 
@@ -164,7 +165,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         animatedContainerStyle,
       ]}
     >
-      <View style={[styles.bubble, isUser ? styles.userBubble : styles.aiBubble]}>
+      {isUser ? (
+        <LinearGradient
+          colors={['rgba(26,78,54,0.96)', 'rgba(14,42,30,0.98)']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.bubble, styles.userBubble]}
+        >
+          {renderContent()}
+          <Text style={styles.userSparkle}>✦</Text>
+        </LinearGradient>
+      ) : (
+      <View style={[styles.bubble, styles.aiBubble]}>
         {renderContent()}
         {!isUser && status === 'streaming' && Boolean(displayText) && (
           <Text style={styles.streamingCursor}>▍</Text>
@@ -181,7 +193,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             activeOpacity={0.85}
             onPress={() => onActionPress?.(actionUrl)}
           >
-            <Text style={styles.paymentButtonText}>Upgrade plan</Text>
+            <Text style={styles.paymentButtonText}>Pro plan lo</Text>
           </TouchableOpacity>
         )}
         {!isUser && status === 'error' && retryPrompt && (
@@ -196,23 +208,24 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         {!isUser && status !== 'streaming' && Boolean(displayText) && (
           <View style={styles.aiActions}>
             <TouchableOpacity style={styles.aiActionButton} onPress={handleCopy}>
-              <Copy size={21} color="#B8B8B8" weight="regular" />
+              <Copy size={18} color="#CFE8D8" weight="regular" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.aiActionButton} onPress={() => setLiked(value => !value)}>
-              <ThumbsUp size={21} color={isLiked ? '#F5F5F5' : '#B8B8B8'} weight={isLiked ? 'fill' : 'regular'} />
+              <ThumbsUp size={18} color={isLiked ? '#6EE7B7' : '#CFE8D8'} weight={isLiked ? 'fill' : 'regular'} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.aiActionButton} onPress={handleSpeak}>
-              <SpeakerHigh size={21} color="#B8B8B8" weight="regular" />
+              <SpeakerHigh size={18} color="#CFE8D8" weight="regular" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.aiActionButton} onPress={handleShare}>
-              <ArrowUpRight size={21} color="#B8B8B8" weight="regular" />
+              <ArrowUpRight size={18} color="#CFE8D8" weight="regular" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.aiActionButton} onPress={handleMoreActions}>
-              <DotsThreeVertical size={21} color="#B8B8B8" weight="bold" />
+              <DotsThreeVertical size={18} color="#CFE8D8" weight="bold" />
             </TouchableOpacity>
           </View>
         )}
       </View>
+      )}
     </Animated.View>
   );
 };
@@ -220,8 +233,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    paddingHorizontal: 22,
-    marginVertical: 10,
+    paddingHorizontal: 18,
+    marginVertical: 7,
     flexDirection: 'row',
   },
   userContainer: {
@@ -232,8 +245,8 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: '88%',
-    paddingHorizontal: 16,
-    paddingVertical: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderRadius: 24,
     shadowColor: '#000',
     shadowOpacity: 0,
@@ -243,11 +256,26 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     maxWidth: '72%',
-    minHeight: 50,
-    backgroundColor: '#3A3A3A',
+    minHeight: 42,
+    backgroundColor: 'rgba(8, 83, 55, 0.82)',
+    borderWidth: 0,
+    borderColor: '#34D399',
+    shadowColor: '#34D399',
+    shadowOpacity: 0.24,
+    shadowRadius: 8,
+    elevation: 4,
     borderRadius: 999,
-    alignItems: 'center',
+    alignItems: 'stretch',
     justifyContent: 'center',
+  },
+  userSparkle: {
+    position: 'absolute',
+    right: -4,
+    bottom: -6,
+    color: '#A7F3D0',
+    fontSize: 18,
+    textShadowColor: '#34D399',
+    textShadowRadius: 7,
   },
   aiBubble: {
     maxWidth: '100%',
@@ -257,18 +285,18 @@ const styles = StyleSheet.create({
   },
   text: {
     ...font.regular,
-    fontSize: 16.5,
-    lineHeight: 26,
+    fontSize: 16,
+    lineHeight: 24,
     letterSpacing: 0.1,
   },
   userText: {
-    color: '#F5F5F5',
+    color: '#ECFDF5',
     fontSize: 16,
-    lineHeight: 22,
-    textAlign: 'center',
+    lineHeight: 24,
+    textAlign: 'left',
   },
   aiText: {
-    color: '#F5F5F5',
+    color: '#F1F5F2',
   },
   boldText: {
     ...font.bold,
@@ -279,7 +307,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     marginVertical: 8,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#2E2E2E',
   },
   codeLangTag: {
@@ -314,7 +342,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 16,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#4A4A4A',
     backgroundColor: '#181818',
   },
@@ -347,11 +375,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   aiActionButton: {
-    width: 34,
-    height: 34,
+    width: 30,
+    height: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 8,
   },
 });
 

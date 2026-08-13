@@ -16,8 +16,11 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import LinearGradient from 'react-native-linear-gradient';
+import Svg, { Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
@@ -38,20 +41,20 @@ import { streamChat, StreamCancelledError, StreamErrorData, StreamServerError } 
 import { font } from '../../theme/typography';
 import {
   ArrowDown,
-  CaretDown,
-  CaretLeft,
-  CheckSquare,
-  DotsThreeVertical,
+  ArrowUp,
+  ChatCircleText,
+  List,
   Microphone,
-  PaperPlaneRight,
+  NotePencil,
   Plus,
-  SlidersHorizontal,
+  SignOut,
   Stop,
   Trash,
+  UserCircle,
 } from '../../components/icons';
+import { logout } from '../../store/authSlice';
 
 type AppStackParamList = {
-  Home: undefined;
   Chat: undefined;
   Billing: undefined;
 };
@@ -66,14 +69,32 @@ type RealtimePayload = {
 };
 
 const DEFAULT_COMPOSER_HEIGHT = 118;
-const KEYBOARD_COMPOSER_GAP = 10;
 const AUTO_SCROLL_THRESHOLD = 120;
 const STREAM_SCROLL_THROTTLE_MS = 120;
+const QUOTA_EXCEEDED_MESSAGE = 'Aapke tokens khatam ho gaye hain. Ab hum baat nahi kar sakte. Continue karne ke liye Pro plan lena hoga.';
+const NOVA_UNAVAILABLE_MESSAGE = 'NOVA abhi connect nahi ho pa rahi. Thodi der baad retry karo.';
+
+const hideTechnicalError = (message?: string) => {
+  if (!message) {
+    return NOVA_UNAVAILABLE_MESSAGE;
+  }
+  if (/groq|gemini|api[_ ]?key|backend\/?\.env|authentication failed/i.test(message)) {
+    return NOVA_UNAVAILABLE_MESSAGE;
+  }
+  return message;
+};
 
 type PaymentErrorPayload = {
   code?: string;
   message?: string;
   paymentUrl?: string;
+};
+
+type Conversation = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
 };
 
 const isChatMessage = (message: RealtimePayload['message']): message is Message => (
@@ -91,21 +112,24 @@ const isPaymentErrorPayload = (message: RealtimePayload['message']): message is 
   message.code === 'quota_exceeded'
 );
 
-type AiModel = {
-  id: string;
-  name: string;
-  tag: string;
-};
-
-const AI_MODELS: AiModel[] = [
-  { id: 'llama-3.1-8b-instant', name: 'Llama 8B', tag: 'Fast' },
-  { id: 'llama-3.3-70b-versatile', name: 'Llama 70B', tag: 'Smart' },
-  { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', tag: 'Balanced' },
-  { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', tag: 'Deep' },
-  { id: 'groq/compound-mini', name: 'Compound Mini', tag: 'Tools' },
-  { id: 'groq/compound', name: 'Compound', tag: 'Advanced' },
-  { id: 'qwen/qwen3.6-27b', name: 'Qwen 27B', tag: 'Reasoning' },
-];
+const NovaBackground = React.memo(() => (
+  <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+    <LinearGradient
+      colors={['rgba(52,199,122,0.10)', 'rgba(2,10,8,0.02)', 'rgba(2,10,8,0)']}
+      locations={[0, 0.48, 1]}
+      style={styles.backgroundTopGradient}
+    />
+    <LinearGradient
+      colors={['rgba(24,92,61,0)', 'rgba(24,92,61,0.16)']}
+      style={styles.backgroundBottomGradient}
+    />
+    <Svg width="100%" height="100%" viewBox="0 0 420 840" preserveAspectRatio="xMidYMid slice" style={StyleSheet.absoluteFill}>
+      <Path d="M-150 360 Q70 205 255 390 T590 310" stroke="#34C77A" strokeOpacity={0.07} strokeWidth={54} fill="none" />
+      <Path d="M-90 610 Q125 405 305 535 T585 455" stroke="#185C3D" strokeOpacity={0.12} strokeWidth={38} fill="none" />
+      <Path d="M120 860 Q250 560 470 430" stroke="#34C77A" strokeOpacity={0.16} strokeWidth={1} fill="none" />
+    </Svg>
+  </View>
+));
 
 
 
@@ -177,19 +201,20 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   const [inputText, setInputText] = useState('');
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [isRealtimeConnected, setRealtimeConnected] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0].id);
   const [isStreaming, setStreaming] = useState(false);
   const [isWaitingForFirstChunk, setWaitingForFirstChunk] = useState(false);
   const [isClearModalVisible, setClearModalVisible] = useState(false);
-  const [isModelPickerVisible, setModelPickerVisible] = useState(false);
+  const [isDrawerVisible, setDrawerVisible] = useState(false);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [composerHeight, setComposerHeight] = useState(DEFAULT_COMPOSER_HEIGHT);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const messages = useAppSelector(state => state.chat.messages);
-  const keyboardBottomOffset = Platform.OS === 'android' && keyboardHeight > 0
-    ? keyboardHeight + KEYBOARD_COMPOSER_GAP
-    : 0;
-  const composerBottomInset = composerHeight + keyboardBottomOffset + 28;
+  const currentUser = useAppSelector(state => state.auth.user);
+  // Android's adjustResize already reduces the available window when the
+  // keyboard opens. Adding the keyboard height again pushes the composer over
+  // the conversation and hides messages behind it.
+  const composerBottomInset = composerHeight + 28;
   const dispatch = useAppDispatch();
   const flatListRef = useRef<FlatList<Message>>(null);
   const websocketRef = useRef<WebSocket | null>(null);
@@ -327,6 +352,10 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
       isFollowingLatestRef.current = true;
     } else if (isUserDraggingRef.current) {
       isFollowingLatestRef.current = false;
+    } else if (isFollowingLatestRef.current) {
+      // Keyboard/layout changes can temporarily report an old scroll offset.
+      // Keep following the conversation unless the user actually dragged it.
+      return;
     }
     updateNearBottom(isNearBottom);
   }, [updateNearBottom]);
@@ -354,47 +383,28 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     handleChatScroll(event);
   }, [handleChatScroll]);
 
-  useEffect(() => {
-    const restoreSelectedModel = async () => {
-      const storedModel = await AsyncStorage.getItem('selectedAiModel');
-      if (storedModel && AI_MODELS.some(model => model.id === storedModel)) {
-        setSelectedModel(storedModel);
-      }
-    };
-
-    restoreSelectedModel();
-  }, []);
-
-  const handleSelectModel = React.useCallback(async (modelId: string) => {
-    setSelectedModel(modelId);
-    setModelPickerVisible(false);
-    await AsyncStorage.setItem('selectedAiModel', modelId);
-  }, []);
-
-  const selectedModelInfo = React.useMemo(() => (
-    AI_MODELS.find(model => model.id === selectedModel) || AI_MODELS[0]
-  ), [selectedModel]);
+  const recentChats = React.useMemo(() => conversations.slice(0, 50), [conversations]);
 
   const handleOpenPayment = React.useCallback(() => {
     navigation.navigate('Billing');
   }, [navigation]);
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener('keyboardDidShow', event => {
-      if (Platform.OS === 'android') {
-        setKeyboardHeight(event.endCoordinates.height);
-      }
+    let keyboardSettleTimers: Array<ReturnType<typeof setTimeout>> = [];
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
       if (isComposerFocusedRef.current) {
-        startFollowingLatestMessages(true);
+        keyboardSettleTimers.forEach(clearTimeout);
+        keyboardSettleTimers = [60, 220, 420].map(delay => setTimeout(() => {
+          if (isComposerFocusedRef.current) {
+            startFollowingLatestMessages(false);
+          }
+        }, delay));
       }
-    });
-    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardHeight(0);
     });
 
     return () => {
+      keyboardSettleTimers.forEach(clearTimeout);
       showSubscription.remove();
-      hideSubscription.remove();
     };
   }, [startFollowingLatestMessages]);
 
@@ -406,15 +416,48 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     dispatch(addMessage(message));
   }, [dispatch]);
 
+  const loadConversation = React.useCallback(async (conversationId: string) => {
+    setLoadingHistory(true);
+    try {
+      const response = await api.get(`/chat/conversations/${conversationId}/messages`);
+      const nextMessages: Message[] = Array.isArray(response.data) ? response.data : [];
+      messageIdsRef.current = new Set(nextMessages.map(message => message.id));
+      dispatch(setMessages(nextMessages));
+      setActiveConversationId(conversationId);
+      setDrawerVisible(false);
+      didInitialScrollRef.current = false;
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [dispatch]);
+
+  const refreshConversations = React.useCallback(async () => {
+    const response = await api.get('/chat/conversations');
+    const nextConversations: Conversation[] = Array.isArray(response.data) ? response.data : [];
+    setConversations(nextConversations);
+    return nextConversations;
+  }, []);
+
+  const openDrawer = React.useCallback(() => {
+    setDrawerVisible(true);
+    refreshConversations().catch(() => undefined);
+  }, [refreshConversations]);
+
   useEffect(() => {
     let isMounted = true;
 
     const fetchHistory = async () => {
       try {
-        const response = await api.get('/chat/history');
-        if (isMounted && Array.isArray(response.data)) {
-          messageIdsRef.current = new Set(response.data.map((message: Message) => message.id));
-          dispatch(setMessages(response.data));
+        const nextConversations = await refreshConversations();
+        if (isMounted && nextConversations.length) {
+          const latestConversation = nextConversations[0];
+          const response = await api.get(`/chat/conversations/${latestConversation.id}/messages`);
+          if (isMounted) {
+            const nextMessages: Message[] = Array.isArray(response.data) ? response.data : [];
+            messageIdsRef.current = new Set(nextMessages.map(message => message.id));
+            dispatch(setMessages(nextMessages));
+            setActiveConversationId(latestConversation.id);
+          }
         }
       } catch (err) {
         console.log('Failed to load chat history:', err);
@@ -452,11 +495,17 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
           if (payload.type === 'error') {
             const errorPayload = payload.message;
             const isPaymentError = isPaymentErrorPayload(errorPayload);
+            const serverErrorMessage = typeof errorPayload === 'object'
+              && errorPayload !== null
+              && 'message' in errorPayload
+              && typeof errorPayload.message === 'string'
+              ? errorPayload.message
+              : undefined;
             const errorText = typeof errorPayload === 'string'
-              ? errorPayload
+              ? hideTechnicalError(errorPayload)
               : isPaymentError
-                ? errorPayload.message || 'AI quota limit reached. Please upgrade to continue.'
-                : 'AI request failed. Please try again.';
+                ? errorPayload.message || QUOTA_EXCEEDED_MESSAGE
+                : hideTechnicalError(serverErrorMessage);
 
             dispatch(setTyping(false));
             addUniqueMessage({
@@ -499,22 +548,43 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
       websocketRef.current?.close();
       websocketRef.current = null;
     };
-  }, [addUniqueMessage, cancelPendingStreamScroll, discardPendingStreamText, dispatch]);
+  }, [addUniqueMessage, cancelPendingStreamScroll, discardPendingStreamText, dispatch, refreshConversations]);
 
-  const handleClearHistory = React.useCallback(() => {
-    setClearModalVisible(true);
-  }, []);
+  const startNewChat = React.useCallback(() => {
+    setDrawerVisible(false);
+    activeStreamControllerRef.current?.abort();
+    setActiveConversationId(null);
+    messageIdsRef.current.clear();
+    dispatch(clearChat());
+    setInputText('');
+  }, [dispatch]);
+
+  const handleDrawerPlans = React.useCallback(() => {
+    setDrawerVisible(false);
+    navigation.navigate('Billing');
+  }, [navigation]);
+
+  const handleLogout = React.useCallback(async () => {
+    setDrawerVisible(false);
+    await AsyncStorage.removeItem('userToken');
+    await AsyncStorage.removeItem('user');
+    dispatch(logout());
+  }, [dispatch]);
 
   const confirmClearHistory = React.useCallback(async () => {
     try {
-      await api.delete('/chat/history');
+      if (activeConversationId) {
+        await api.delete(`/chat/conversations/${activeConversationId}`);
+      }
     } catch (err) {
       console.log('Error clearing server history:', err);
     }
     messageIdsRef.current.clear();
     dispatch(clearChat());
+    setActiveConversationId(null);
+    await refreshConversations().catch(() => undefined);
     setClearModalVisible(false);
-  }, [dispatch]);
+  }, [activeConversationId, dispatch, refreshConversations]);
 
   React.useLayoutEffect(() => {
     navigation.setOptions({
@@ -534,9 +604,9 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   }, [dispatch]);
 
   const getStreamErrorText = (error: Error, data?: StreamErrorData) => (
-    data?.message
-    || error.message
-    || 'Unable to generate the response. Please try again.'
+    data?.code === 'quota_exceeded'
+      ? data.message || QUOTA_EXCEEDED_MESSAGE
+      : hideTechnicalError(data?.message || error.message)
   );
 
   const startStreamingResponse = React.useCallback(async ({
@@ -572,8 +642,27 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     try {
       await streamChat({
         message: prompt,
-        model: selectedModel,
+        conversationId: activeConversationId,
         signal: controller.signal,
+        onStart: (data) => {
+          if (data.conversation_id) {
+            setActiveConversationId(data.conversation_id);
+            setConversations(current => {
+              const existing = current.find(item => item.id === data.conversation_id);
+              const now = Date.now();
+              const conversation: Conversation = existing || {
+                id: data.conversation_id as string,
+                title: data.conversation_title || prompt.slice(0, 60),
+                createdAt: now,
+                updatedAt: now,
+              };
+              return [
+                { ...conversation, updatedAt: now },
+                ...current.filter(item => item.id !== data.conversation_id),
+              ];
+            });
+          }
+        },
         onChunk: (content) => {
           if (activeAssistantMessageIdRef.current !== assistantMessageId) {
             return;
@@ -636,7 +725,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
       }
       scheduleStreamAutoScroll();
     }
-  }, [dispatch, finishActiveStream, flushPendingStreamText, queueStreamingText, scheduleStreamAutoScroll, selectedModel, startFollowingLatestMessages]);
+  }, [activeConversationId, dispatch, finishActiveStream, flushPendingStreamText, queueStreamingText, scheduleStreamAutoScroll, startFollowingLatestMessages]);
 
   const handleStopGenerating = React.useCallback(() => {
     const assistantMessageId = activeAssistantMessageIdRef.current;
@@ -717,20 +806,18 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   const handleListLayout = React.useCallback(() => {
     if (!didInitialScrollRef.current) {
       scrollToBottom(false);
+      return;
+    }
+    if (isComposerFocusedRef.current && isFollowingLatestRef.current) {
+      scrollToBottom(false);
     }
   }, [scrollToBottom]);
 
-  const listContentStyle = React.useMemo(() => [
-    styles.listContent,
-    {
-      paddingBottom: composerBottomInset,
-    },
-  ], [composerBottomInset]);
+  const listFooter = React.useMemo(() => (
+    <View style={{ height: composerBottomInset }} />
+  ), [composerBottomInset]);
 
-  const inputContainerStyle = React.useMemo(() => [
-    styles.inputContainer,
-    keyboardBottomOffset > 0 && { bottom: keyboardBottomOffset },
-  ], [keyboardBottomOffset]);
+  const inputContainerStyle = styles.inputContainer;
 
   useEffect(() => {
     if (!loadingHistory && !didInitialScrollRef.current) {
@@ -745,7 +832,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
         scrollToBottom(false);
       }
     }
-  }, [composerHeight, keyboardBottomOffset, loadingHistory, scrollToBottom]);
+  }, [composerHeight, loadingHistory, scrollToBottom]);
 
   useEffect(() => () => {
     cancelPendingStreamScroll();
@@ -757,36 +844,40 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <NovaBackground />
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.topBar}>
           <TouchableOpacity
             style={styles.roundIconButton}
             activeOpacity={0.82}
-            onPress={() => navigation.goBack()}
+            onPress={openDrawer}
+            accessibilityRole="button"
+            accessibilityLabel="Open menu"
           >
-            <CaretLeft size={25} color="#F5F5F5" weight="bold" />
+            <List size={21} color="#F5F5F5" weight="bold" />
           </TouchableOpacity>
 
-          <View style={styles.brandPill}>
-            <Text style={styles.brandText}>NOVA</Text>
-            <View style={[styles.statusDot, isRealtimeConnected && styles.statusDotLive]} />
+          <View style={styles.headerCenter}>
+            <View style={styles.headerNameRowNew}>
+              <Text style={styles.headerName}>Nova</Text>
+              <View style={styles.headerOnlineDot} />
+            </View>
+            <Text style={styles.headerSubtitle}>Always here to help</Text>
           </View>
 
-          <View style={styles.actionPill}>
-            <TouchableOpacity
-              style={styles.actionIconButton}
-              activeOpacity={0.82}
-              onPress={handleClearHistory}
-            >
-              <Trash size={24} color="#F5F5F5" weight="regular" />
-            </TouchableOpacity>
-            <View style={styles.actionDivider} />
-            <DotsThreeVertical size={27} color="#F5F5F5" weight="bold" />
-          </View>
+          <TouchableOpacity
+            style={styles.connectionButton}
+            activeOpacity={0.82}
+            onPress={startNewChat}
+            accessibilityRole="button"
+            accessibilityLabel="Start a new chat"
+          >
+            <NotePencil size={20} color="#ECFDF5" weight="regular" />
+          </TouchableOpacity>
         </View>
 
         {loadingHistory ? (
@@ -797,10 +888,12 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
         ) : (
           <FlatList<Message>
             ref={flatListRef}
+            style={styles.messageList}
             data={messages}
             keyExtractor={keyExtractor}
             renderItem={renderMessageItem}
-            contentContainerStyle={listContentStyle}
+            contentContainerStyle={styles.listContent}
+            ListFooterComponent={listFooter}
             onContentSizeChange={handleContentSizeChange}
             onLayout={handleListLayout}
             onScroll={handleChatScroll}
@@ -811,6 +904,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
             decelerationRate="normal"
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
             initialNumToRender={14}
             maxToRenderPerBatch={8}
             updateCellsBatchingPeriod={40}
@@ -838,7 +932,10 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
           </View>
         )}
 
-        <View
+        <LinearGradient
+          colors={['rgba(18,58,42,0.97)', 'rgba(5,27,21,0.98)']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={inputContainerStyle}
           onLayout={(event) => {
             const nextHeight = Math.ceil(event.nativeEvent.layout.height);
@@ -851,8 +948,8 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
             style={styles.input}
             value={inputText}
             onChangeText={setInputText}
-            placeholder="Ask NOVA anything"
-            placeholderTextColor="#777"
+            placeholder="Ask anything"
+            placeholderTextColor="#72A38C"
             multiline
             maxLength={1000}
             onFocus={focusCurrentConversation}
@@ -863,18 +960,6 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
           <View style={styles.composerToolbar}>
             <TouchableOpacity style={styles.composerIconButton} activeOpacity={0.82}>
               <Plus size={24} color="#F5F5F5" weight="regular" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modelInInputButton}
-              activeOpacity={0.82}
-              onPress={() => {
-                Keyboard.dismiss();
-                setModelPickerVisible(true);
-              }}
-            >
-              <SlidersHorizontal size={16} color="#F5F5F5" weight="bold" />
-              <Text style={styles.modelInInputText}>{selectedModelInfo.name}</Text>
-              <CaretDown size={13} color="#B8B8B8" weight="bold" />
             </TouchableOpacity>
             <View style={styles.composerSpacer} />
             <TouchableOpacity style={styles.composerIconButton} activeOpacity={0.82}>
@@ -889,57 +974,76 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
               {isStreaming ? (
                 <Stop size={19} color="#0A0A0A" weight="fill" />
               ) : (
-                <PaperPlaneRight size={21} color="#0A0A0A" weight="fill" />
+                <ArrowUp size={24} color="#0A0A0A" weight="bold" />
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </LinearGradient>
         <Modal
-          visible={isModelPickerVisible}
+          visible={isDrawerVisible}
           transparent
           animationType="fade"
-          onRequestClose={() => setModelPickerVisible(false)}
+          statusBarTranslucent
+          onRequestClose={() => setDrawerVisible(false)}
         >
-          <Pressable style={styles.modelModalBackdrop} onPress={() => setModelPickerVisible(false)}>
-            <Pressable style={styles.modelMenuCard}>
-              <View style={styles.modelMenuHeader}>
-                <View>
-                  <Text style={styles.modelMenuTitle}>Choose a model</Text>
-                  <Text style={styles.modelMenuSubtitle}>Select the response style you need.</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.modelMenuClose}
-                  onPress={() => setModelPickerVisible(false)}
-                >
-                  <Text style={styles.modelMenuCloseText}>Done</Text>
-                </TouchableOpacity>
+          <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerVisible(false)}>
+            <Pressable style={styles.drawerPanel} onPress={() => undefined}>
+              <View style={styles.drawerBrandRow}>
+                <Text style={styles.drawerBrand}>NOVA</Text>
+                <View style={[styles.drawerLiveDot, isRealtimeConnected && styles.drawerLiveDotConnected]} />
               </View>
-              <FlatList
-                data={AI_MODELS}
-                keyExtractor={model => model.id}
+
+              <ScrollView
+                style={styles.drawerMenu}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.modelMenuList}
-                renderItem={({ item: model }) => {
-                  const isSelected = selectedModel === model.id;
-                  return (
-                    <TouchableOpacity
-                      style={[styles.modelMenuRow, isSelected && styles.modelMenuRowSelected]}
-                      activeOpacity={0.78}
-                      onPress={() => handleSelectModel(model.id)}
-                    >
-                      <View style={styles.modelMenuCopy}>
-                        <Text style={[styles.modelMenuName, isSelected && styles.modelMenuNameSelected]}>
-                          {model.name}
-                        </Text>
-                        <Text style={[styles.modelMenuTag, isSelected && styles.modelMenuTagSelected]}>
-                          {model.tag}
-                        </Text>
-                      </View>
-                      {isSelected && <CheckSquare size={22} color="#0A0A0A" weight="fill" />}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
+                contentContainerStyle={styles.drawerMenuContent}
+              >
+                <TouchableOpacity style={styles.drawerMenuItemActive} onPress={startNewChat}>
+                  <Plus size={20} color="#F4F4F4" weight="regular" />
+                  <View style={styles.drawerMenuCopyNew}>
+                    <Text style={styles.drawerMenuTextActive}>New chat</Text>
+                    <Text style={styles.drawerMenuSubtitle}>Start a fresh conversation</Text>
+                  </View>
+                </TouchableOpacity>
+                <Text style={styles.drawerSectionLabel}>RECENT CHATS</Text>
+                {recentChats.length ? recentChats.map(conversation => (
+                  <TouchableOpacity
+                    key={conversation.id}
+                    style={[
+                      styles.drawerMenuItem,
+                      activeConversationId === conversation.id && styles.drawerMenuItemActive,
+                    ]}
+                    onPress={() => loadConversation(conversation.id)}
+                  >
+                    <ChatCircleText size={19} color="#83CFA9" weight="regular" />
+                    <Text style={styles.drawerMenuText} numberOfLines={1}>{conversation.title}</Text>
+                  </TouchableOpacity>
+                )) : (
+                  <Text style={styles.drawerEmptyText}>No conversations yet</Text>
+                )}
+                <TouchableOpacity style={styles.drawerPlansLink} onPress={handleDrawerPlans}>
+                  <Text style={styles.drawerMenuGlyph}>N</Text>
+                  <Text style={styles.drawerMenuText}>NOVA plans</Text>
+                </TouchableOpacity>
+              </ScrollView>
+
+              <View style={styles.drawerAccountArea}>
+                <View style={styles.drawerAccountRow}>
+                  <UserCircle size={34} color="#E8E8E8" weight="regular" />
+                  <View style={styles.drawerAccountCopy}>
+                    <Text style={styles.drawerAccountName} numberOfLines={1}>
+                      {currentUser?.name || 'NOVA user'}
+                    </Text>
+                    <Text style={styles.drawerAccountEmail} numberOfLines={1}>
+                      {currentUser?.email || ''}
+                    </Text>
+                  </View>
+                  <TouchableOpacity style={styles.drawerLogout} onPress={handleLogout} activeOpacity={0.8}>
+                    <SignOut size={18} color="#D5D5D5" weight="regular" />
+                    <Text style={styles.drawerLogoutText}>Logout</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </Pressable>
           </Pressable>
         </Modal>
@@ -983,17 +1087,59 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#020A08',
   },
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: 'transparent',
+  },
+  backgroundTopGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '48%',
+  },
+  backgroundBottomGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '70%',
+  },
+  ambientTopGlow: {
+    position: 'absolute',
+    top: -100,
+    left: -80,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: 'rgba(0, 91, 62, 0.12)',
+  },
+  ambientBottomGlow: {
+    position: 'absolute',
+    right: -150,
+    bottom: 160,
+    width: 460,
+    height: 460,
+    borderRadius: 230,
+    backgroundColor: 'rgba(0, 105, 67, 0.09)',
+  },
+  ambientArc: {
+    position: 'absolute',
+    right: -190,
+    top: '32%',
+    width: 480,
+    height: 480,
+    borderRadius: 240,
+    borderWidth: 0,
+    borderColor: 'rgba(52, 211, 153, 0.12)',
   },
   topBar: {
-    minHeight: 74,
-    paddingHorizontal: 22,
-    paddingTop: 8,
-    paddingBottom: 10,
+    minHeight: 54,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1011,14 +1157,66 @@ const styles = StyleSheet.create({
     marginRight: 5,
   },
   roundIconButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#1F1F1F',
-    borderWidth: 1,
-    borderColor: '#343434',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(6, 38, 28, 0.78)',
+    borderWidth: 0,
+    borderColor: 'rgba(52, 211, 153, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerCenter: {
+    minWidth: 150,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerNameRowNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerName: {
+    ...font.black,
+    color: '#F8FAFC',
+    fontSize: 20,
+    letterSpacing: 0.2,
+  },
+  headerOnlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginLeft: 8,
+    backgroundColor: '#F5F5F5',
+  },
+  headerSubtitle: {
+    ...font.regular,
+    color: '#86BFA8',
+    fontSize: 13,
+    marginTop: 1,
+  },
+  connectionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(6, 38, 28, 0.78)',
+    borderWidth: 0,
+    borderColor: 'rgba(52, 211, 153, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connectionDot: {
+    position: 'absolute',
+    right: 9,
+    bottom: 9,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#777777',
+    borderWidth: 0,
+    borderColor: '#1F1F1F',
+  },
+  connectionDotLive: {
+    backgroundColor: '#F5F5F5',
   },
   roundIconText: {
     ...font.regular,
@@ -1034,7 +1232,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 999,
     backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: 'rgba(255,255,255,0.08)',
   },
   brandText: {
@@ -1050,7 +1248,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     borderRadius: 27,
     backgroundColor: '#1F1F1F',
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#343434',
     flexDirection: 'row',
     alignItems: 'center',
@@ -1085,7 +1283,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F5F5F5',
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#F5F5F5',
     marginRight: 10,
   },
@@ -1152,12 +1350,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
   },
+  messageList: {
+    flex: 1,
+  },
   clearHeaderBtn: {
     paddingHorizontal: 14,
     paddingVertical: 7,
     backgroundColor: '#181818',
     borderRadius: 999,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#333333',
   },
   clearHeaderBtnText: {
@@ -1166,7 +1367,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   listContent: {
-    paddingTop: 36,
+    paddingTop: 20,
     paddingHorizontal: 0,
   },
   scrollToLatestButton: {
@@ -1175,7 +1376,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     paddingHorizontal: 14,
     borderRadius: 20,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#A7F3D0',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1202,7 +1403,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#151515',
     borderRadius: 20,
     borderBottomLeftRadius: 6,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#333333',
     paddingHorizontal: 13,
     paddingVertical: 11,
@@ -1237,6 +1438,171 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
     marginHorizontal: 3,
   },
+  drawerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.62)',
+    flexDirection: 'row',
+  },
+  drawerPanel: {
+    width: '80%',
+    maxWidth: 340,
+    height: '100%',
+    paddingTop: 54,
+    paddingHorizontal: 20,
+    paddingBottom: 22,
+    backgroundColor: '#020D0A',
+    borderRightWidth: 0,
+    borderRightColor: '#1E8D63',
+    justifyContent: 'space-between',
+  },
+  drawerBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  drawerBrand: {
+    ...font.black,
+    color: '#F8FAFC',
+    fontSize: 22,
+    letterSpacing: 0.5,
+  },
+  drawerLiveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 10,
+    backgroundColor: '#666666',
+  },
+  drawerLiveDotConnected: {
+    backgroundColor: '#F5F5F5',
+  },
+  drawerMenu: {
+    flex: 1,
+    paddingTop: 34,
+  },
+  drawerMenuContent: {
+    paddingBottom: 20,
+  },
+  drawerMenuItem: {
+    minHeight: 46,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 0,
+    borderColor: 'rgba(52, 211, 153, 0.18)',
+    backgroundColor: 'rgba(5, 35, 26, 0.72)',
+  },
+  drawerMenuItemActive: {
+    minHeight: 60,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(8, 69, 47, 0.72)',
+    borderWidth: 0,
+    borderColor: '#34D399',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  drawerMenuText: {
+    ...font.medium,
+    color: '#D2D2D2',
+    fontSize: 15,
+    marginLeft: 13,
+  },
+  drawerMenuTextActive: {
+    ...font.bold,
+    color: '#F4F4F4',
+    fontSize: 15,
+    marginLeft: 13,
+  },
+  drawerMenuCopyNew: {
+    marginLeft: 13,
+  },
+  drawerMenuSubtitle: {
+    ...font.regular,
+    color: '#82BFA5',
+    fontSize: 10,
+    marginTop: 1,
+  },
+  drawerSectionLabel: {
+    ...font.bold,
+    color: '#65A88C',
+    fontSize: 10,
+    letterSpacing: 1.6,
+    marginTop: 16,
+    marginBottom: 8,
+    marginLeft: 8,
+  },
+  drawerMenuGlyph: {
+    ...font.black,
+    width: 24,
+    color: '#D2D2D2',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+  drawerEmptyText: {
+    ...font.regular,
+    color: '#668778',
+    fontSize: 13,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
+  drawerPlansLink: {
+    minHeight: 46,
+    paddingHorizontal: 12,
+    marginTop: 12,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 0,
+    borderColor: 'rgba(52,211,153,0.18)',
+  },
+  drawerAccountArea: {
+    paddingTop: 18,
+    borderTopWidth: 0,
+    borderTopColor: '#174C38',
+  },
+  drawerAccountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    minHeight: 58,
+    borderRadius: 16,
+    borderWidth: 0,
+    borderColor: 'rgba(52, 211, 153, 0.38)',
+    backgroundColor: 'rgba(5, 35, 26, 0.72)',
+  },
+  drawerAccountCopy: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  drawerAccountName: {
+    ...font.bold,
+    color: '#F2F2F2',
+    fontSize: 14,
+  },
+  drawerAccountEmail: {
+    ...font.regular,
+    color: '#888888',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  drawerLogout: {
+    height: 36,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  drawerLogoutText: {
+    ...font.medium,
+    color: '#B8B8B8',
+    fontSize: 12,
+    marginLeft: 6,
+  },
   inputContainer: {
     position: 'absolute',
     left: 22,
@@ -1246,11 +1612,11 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 9,
     borderRadius: 28,
-    borderWidth: 1,
-    borderColor: '#3A3A3A',
-    backgroundColor: '#202020',
-    shadowColor: '#000',
-    shadowOpacity: 0.38,
+    borderWidth: 0,
+    borderColor: '#34D399',
+    backgroundColor: 'rgba(5, 35, 26, 0.94)',
+    shadowColor: '#34D399',
+    shadowOpacity: 0.32,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
     elevation: 16,
@@ -1261,7 +1627,7 @@ const styles = StyleSheet.create({
   input: {
     width: '100%',
     backgroundColor: 'transparent',
-    color: '#F8FAFC',
+    color: '#ECFDF5',
     borderRadius: 24,
     paddingHorizontal: 6,
     paddingTop: 4,
@@ -1269,7 +1635,7 @@ const styles = StyleSheet.create({
     maxHeight: 124,
     minHeight: 34,
     fontSize: 16,
-    lineHeight: 21,
+    lineHeight: 24,
     ...font.regular,
   },
   composerToolbar: {
@@ -1284,119 +1650,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 6,
-  },
-  modelInInputButton: {
-    height: 34,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    borderRadius: 17,
-    backgroundColor: '#2A2A2A',
-    borderWidth: 1,
-    borderColor: '#3A3A3A',
-  },
-  modelInInputText: {
-    ...font.bold,
-    color: '#F5F5F5',
-    fontSize: 12,
-    marginHorizontal: 6,
+    backgroundColor: 'rgba(16, 92, 63, 0.28)',
   },
   composerSpacer: {
     flex: 1,
   },
-  modelModalBackdrop: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.58)',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-  },
-  modelMenuCard: {
-    maxHeight: '68%',
-    borderRadius: 28,
-    backgroundColor: '#1B1B1B',
-    borderWidth: 1,
-    borderColor: '#393939',
-    overflow: 'hidden',
-  },
-  modelMenuHeader: {
-    minHeight: 72,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#303030',
-  },
-  modelMenuTitle: {
-    ...font.black,
-    color: '#F5F5F5',
-    fontSize: 17,
-  },
-  modelMenuSubtitle: {
-    ...font.regular,
-    color: '#9E9E9E',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  modelMenuClose: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
-    backgroundColor: '#292929',
-  },
-  modelMenuCloseText: {
-    ...font.bold,
-    color: '#F5F5F5',
-    fontSize: 12,
-  },
-  modelMenuList: {
-    padding: 10,
-  },
-  modelMenuRow: {
-    minHeight: 58,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 17,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  modelMenuRowSelected: {
-    backgroundColor: '#F5F5F5',
-  },
-  modelMenuCopy: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  modelMenuName: {
-    ...font.bold,
-    color: '#F5F5F5',
-    fontSize: 15,
-  },
-  modelMenuNameSelected: {
-    color: '#0A0A0A',
-  },
-  modelMenuTag: {
-    ...font.regular,
-    color: '#969696',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  modelMenuTagSelected: {
-    color: '#4F4F4F',
-  },
   sendButton: {
     width: 38,
     height: 38,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#34D399',
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#343434',
+    backgroundColor: '#174C38',
   },
   sendButtonText: {
     ...font.black,
@@ -1416,7 +1684,7 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     borderRadius: 28,
     backgroundColor: '#181818',
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: '#323232',
     padding: 22,
   },

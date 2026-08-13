@@ -7,8 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from database import SessionLocal, User, Message, Subscription, Base, engine
-from realtime import RedisChannel
+from database import SessionLocal, User, Message, Subscription, Conversation, Base, engine
 import base64
 import asyncio
 import hashlib
@@ -54,15 +53,15 @@ def health_check():
         "service": "nova-backend",
         "ai_provider": AI_PROVIDER,
         "realtime_active": True,
-        "redis_enabled": manager.redis.enabled,
-        "redis_connected": manager.redis.connected,
+        "redis_enabled": False,
+        "redis_connected": False,
     }
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
 PAYMENT_URL = os.getenv("PAYMENT_URL", "https://console.groq.com/settings/billing")
-FORCE_QUOTA_EXCEEDED = os.getenv("FORCE_QUOTA_EXCEEDED", "false").lower() == "true"
+QUOTA_EXCEEDED_MESSAGE = "Aapke tokens khatam ho gaye hain. Ab hum baat nahi kar sakte. Continue karne ke liye Pro plan lena hoga."
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 AUTH_SECRET = os.getenv("AUTH_SECRET", "nova-dev-secret-change-me")
@@ -156,6 +155,7 @@ class RegisterRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     model: Optional[str] = None
+    conversation_id: Optional[int] = None
 
 
 class BillingOrderRequest(BaseModel):
@@ -250,6 +250,39 @@ def serialize_message(message: Message) -> dict:
         "text": message.text,
         "timestamp": int(timestamp.timestamp() * 1000),
     }
+
+
+def serialize_conversation(conversation: Conversation) -> dict:
+    updated_at = conversation.updated_at or conversation.created_at or datetime.utcnow()
+    return {
+        "id": str(conversation.id),
+        "title": conversation.title,
+        "createdAt": int((conversation.created_at or updated_at).timestamp() * 1000),
+        "updatedAt": int(updated_at.timestamp() * 1000),
+    }
+
+
+def get_or_create_conversation(
+    db: Session,
+    current_user: User,
+    conversation_id: Optional[int],
+    first_message: str,
+) -> Conversation:
+    if conversation_id is not None:
+        conversation = (
+            db.query(Conversation)
+            .filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id)
+            .first()
+        )
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return conversation
+
+    title = first_message.strip()[:60] or "New chat"
+    conversation = Conversation(user_id=current_user.id, title=title)
+    db.add(conversation)
+    db.flush()
+    return conversation
 
 
 def create_sse_event(event: str, data: dict) -> str:
@@ -387,21 +420,31 @@ def build_chat_messages(user_message: str, history: List[Message]) -> list[dict]
         {
             "role": "system",
             "content": (
-                "You are NOVA, an intelligent, friendly, and helpful AI assistant. "
-                "Be polite, practical, and format answers using Markdown when useful. "
-                f"{LANGUAGE_POLICY} Keep the tone friendly, clear, and practical."
+                "You are NOVA, an intelligent, friendly, and helpful female AI assistant. "
+                "Your identity is always female. When referring to yourself in Hinglish, consistently "
+                "use feminine forms such as 'karti hoon', 'gayi', and 'rahi hoon'. "
+                "Be extremely lazy and ultra-brief. Reply using only 1-3 words. "
+                "Prefer one word whenever possible. Never explain, elaborate, add context, "
+                "use lists, or exceed three words under any circumstances. Use casual WhatsApp style. "
+                "For coding requests, follow Ponytail mode: reuse existing code, prefer native or "
+                "already-installed solutions, avoid unnecessary abstractions and dependencies, and "
+                "produce the smallest safe working change without cutting validation or security. "
+                f"{LANGUAGE_POLICY}"
             ),
         }
     ]
 
-    for item in history[-10:]:
+    for item in history[-50:]:
         role = "user" if item.sender == "user" else "assistant"
         content = item.text
         if role == "assistant" and INDIC_SCRIPT_PATTERN.search(content):
             content = "[Previous assistant reply omitted because it used the wrong script.]"
         messages.append({"role": role, "content": content})
 
-    messages.append({"role": "system", "content": f"Final reminder: {LANGUAGE_POLICY}"})
+    messages.append({
+        "role": "system",
+        "content": f"Final reminder: only 1-3 words; prefer one. No explanations. {LANGUAGE_POLICY}",
+    })
     messages.append({"role": "user", "content": user_message})
     return messages
 
@@ -410,7 +453,7 @@ def build_chat_messages(user_message: str, history: List[Message]) -> list[dict]
 
 
 def call_groq_chat(model: str, user_message: str, history: List[Message]) -> str:
-    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "512"))
+    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "5000"))
     payload = {
         "model": model,
         "messages": build_chat_messages(user_message, history),
@@ -424,7 +467,7 @@ def call_groq_chat(model: str, user_message: str, history: List[Message]) -> str
             "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "NOVA-ReactNative-Backend/1.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
         method="POST",
     )
@@ -442,7 +485,7 @@ def call_groq_chat(model: str, user_message: str, history: List[Message]) -> str
 
 
 def iter_groq_chat_stream(model: str, user_message: str, history: List[Message]):
-    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "512"))
+    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "5000"))
     payload = {
         "model": model,
         "messages": build_chat_messages(user_message, history),
@@ -457,7 +500,7 @@ def iter_groq_chat_stream(model: str, user_message: str, history: List[Message])
             "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
-            "User-Agent": "NOVA-ReactNative-Backend/1.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
         method="POST",
     )
@@ -488,7 +531,7 @@ async def stream_groq_response(user_message: str, history: List[Message], select
     if not GROQ_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Groq API key is not configured. Add GROQ_API_KEY to backend/.env.",
+            detail="NOVA abhi connect nahi ho pa rahi. Thodi der baad retry karo.",
         )
 
     primary_model = resolve_groq_model(selected_model)
@@ -518,7 +561,7 @@ async def stream_groq_response(user_message: str, history: List[Message], select
             if exc.code in (401, 403):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Groq authentication failed. Check GROQ_API_KEY in backend/.env.",
+                    detail="NOVA abhi connect nahi ho pa rahi. Thodi der baad retry karo.",
                 ) from exc
             if exc.code == 404:
                 raise HTTPException(
@@ -542,14 +585,14 @@ async def stream_groq_response(user_message: str, history: List[Message], select
         status_code=status.HTTP_402_PAYMENT_REQUIRED,
         detail={
             "code": "quota_exceeded",
-            "message": "Groq token limit reached. Upgrade billing or wait for your quota to reset.",
+            "message": QUOTA_EXCEEDED_MESSAGE,
             "paymentUrl": PAYMENT_URL,
         },
     ) from last_rate_limit_error
 
 
 async def stream_ai_response(user_message: str, history: List[Message], selected_model: Optional[str] = None):
-    if AI_PROVIDER == "groq" or GROQ_API_KEY:
+    if AI_PROVIDER == "groq" or (AI_PROVIDER != "gemini" and GROQ_API_KEY):
         async for chunk in stream_groq_response(user_message, history, selected_model):
             yield chunk
         return
@@ -563,7 +606,7 @@ def generate_groq_response(user_message: str, history: List[Message], selected_m
     if not GROQ_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Groq API key is not configured. Add GROQ_API_KEY to backend/.env.",
+            detail="NOVA abhi connect nahi ho pa rahi. Thodi der baad retry karo.",
         )
 
     primary_model = resolve_groq_model(selected_model)
@@ -585,7 +628,7 @@ def generate_groq_response(user_message: str, history: List[Message], selected_m
             if exc.code in (401, 403):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Groq authentication failed. Check GROQ_API_KEY in backend/.env.",
+                    detail="NOVA abhi connect nahi ho pa rahi. Thodi der baad retry karo.",
                 ) from exc
             if exc.code == 404:
                 raise HTTPException(
@@ -609,10 +652,11 @@ def generate_groq_response(user_message: str, history: List[Message], selected_m
         status_code=status.HTTP_402_PAYMENT_REQUIRED,
         detail={
             "code": "quota_exceeded",
-            "message": "Groq token limit reached. Upgrade billing or wait for your quota to reset.",
+            "message": QUOTA_EXCEEDED_MESSAGE,
             "paymentUrl": PAYMENT_URL,
         },
     ) from last_rate_limit_error
+
 
 def generate_gemini_response(user_message: str, history: List[Message]) -> str:
     if not GEMINI_API_KEY:
@@ -632,14 +676,14 @@ def generate_gemini_response(user_message: str, history: List[Message]) -> str:
             contents = []
             system_prompt = build_chat_messages(user_message, [])[0]["content"]
 
-            for item in history[-10:]:
+            for item in history[-50:]:
                 role = "user" if item.sender == "user" else "model"
                 contents.append({"role": role, "parts": [{"text": item.text}]})
 
             contents.append({"role": "user", "parts": [{"text": user_message}]})
 
             response = genai_client.models.generate_content(
-                model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+                model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
                 contents=contents,
                 config={"system_instruction": system_prompt},
             )
@@ -653,7 +697,7 @@ def generate_gemini_response(user_message: str, history: List[Message]) -> str:
             if "401" in error_text or "UNAUTHENTICATED" in error_text:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Gemini authentication failed. Check GEMINI_API_KEY in backend/.env.",
+                    detail="NOVA abhi connect nahi ho pa rahi. Thodi der baad retry karo.",
                 ) from exc
             if "404" in error_text or "not found" in error_text.lower():
                 raise HTTPException(
@@ -665,17 +709,18 @@ def generate_gemini_response(user_message: str, history: List[Message]) -> str:
                 detail="Gemini failed to generate a response. Check backend logs for details.",
             ) from exc
 
-    try:
-        model = legacy_genai.GenerativeModel(os.getenv("GEMINI_LEGACY_MODEL", "gemini-1.5-flash"))
-        response = model.generate_content(user_message)
-        if response and response.text:
-            return response.text
-    except Exception as exc:
-        print(f"Legacy Gemini API Error: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Gemini failed to generate a response. Check backend logs for details.",
-        ) from exc
+    if legacy_genai:
+        try:
+            model = legacy_genai.GenerativeModel(os.getenv("GEMINI_LEGACY_MODEL", "gemini-1.5-flash"))
+            response = model.generate_content(user_message)
+            if response and response.text:
+                return response.text
+        except Exception as exc:
+            print(f"Legacy Gemini API Error: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Gemini failed to generate a response. Check backend logs for details.",
+            ) from exc
 
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -692,27 +737,31 @@ def generate_ai_response(user_message: str, history: List[Message], selected_mod
         return generate_groq_response(user_message, history, selected_model)
     return generate_gemini_response(user_message, history)
 
+
 def create_chat_turn(
     db: Session,
     current_user: User,
     text: str,
     selected_model: Optional[str] = None,
+    conversation_id: Optional[int] = None,
 ) -> tuple[Message, Message]:
     clean_text = text.strip()
     if not clean_text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    conversation = get_or_create_conversation(db, current_user, conversation_id, clean_text)
     history = (
         db.query(Message)
-        .filter(Message.user_id == current_user.id)
+        .filter(Message.user_id == current_user.id, Message.conversation_id == conversation.id)
         .order_by(Message.id.asc())
         .all()
     )
 
     ai_text = generate_ai_response(clean_text, history, selected_model)
 
-    user_message = Message(user_id=current_user.id, sender="user", text=clean_text)
-    ai_message = Message(user_id=current_user.id, sender="ai", text=ai_text)
+    user_message = Message(user_id=current_user.id, conversation_id=conversation.id, sender="user", text=clean_text)
+    ai_message = Message(user_id=current_user.id, conversation_id=conversation.id, sender="ai", text=ai_text)
+    conversation.updated_at = datetime.utcnow()
     db.add(user_message)
     db.add(ai_message)
     db.commit()
@@ -725,17 +774,6 @@ def create_chat_turn(
 class ConnectionManager:
     def __init__(self):
         self.active_connections: dict[int, set[WebSocket]] = {}
-        self.redis = RedisChannel(
-            redis_url=os.getenv("REDIS_URL"),
-            channel_name=os.getenv("REDIS_CHANNEL", "nova:realtime"),
-            payload_handler=self.send_local,
-        )
-
-    async def start(self):
-        await self.redis.start()
-
-    async def stop(self):
-        await self.redis.stop()
 
     async def connect(self, user_id: int, websocket: WebSocket):
         await websocket.accept()
@@ -761,20 +799,9 @@ class ConnectionManager:
 
     async def send_to_user(self, user_id: int, payload: dict):
         await self.send_local(user_id, payload)
-        await self.redis.publish(user_id, payload)
 
 
 manager = ConnectionManager()
-
-
-@app.on_event("startup")
-async def start_realtime_channel():
-    await manager.start()
-
-
-@app.on_event("shutdown")
-async def stop_realtime_channel():
-    await manager.stop()
 
 
 @app.get("/")
@@ -785,8 +812,8 @@ def read_root():
         "gemini_active": genai_client is not None or legacy_genai is not None,
         "groq_active": bool(GROQ_API_KEY),
         "realtime_active": True,
-        "redis_enabled": manager.redis.enabled,
-        "redis_connected": manager.redis.connected,
+        "redis_enabled": False,
+        "redis_connected": False,
     }
 
 
@@ -995,16 +1022,73 @@ def read_current_user(current_user: User = Depends(get_current_user)):
 
 @app.get("/chat/history")
 def get_chat_history(
+    conversation_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    messages = (
-        db.query(Message)
-        .filter(Message.user_id == current_user.id)
-        .order_by(Message.id.asc())
+    query = db.query(Message).filter(Message.user_id == current_user.id)
+    if conversation_id is not None:
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        ).first()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        query = query.filter(Message.conversation_id == conversation.id)
+    messages = query.order_by(Message.id.asc()).all()
+    return [serialize_message(message) for message in messages]
+
+
+@app.get("/chat/conversations")
+def list_conversations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    conversations = (
+        db.query(Conversation)
+        .filter(Conversation.user_id == current_user.id)
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .limit(50)
         .all()
     )
+    return [serialize_conversation(conversation) for conversation in conversations]
+
+
+@app.get("/chat/conversations/{conversation_id}/messages")
+def get_conversation_messages(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id,
+    ).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    messages = db.query(Message).filter(
+        Message.user_id == current_user.id,
+        Message.conversation_id == conversation.id,
+    ).order_by(Message.id.asc()).all()
     return [serialize_message(message) for message in messages]
+
+
+@app.delete("/chat/conversations/{conversation_id}")
+def delete_conversation(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id,
+    ).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    db.query(Message).filter(Message.conversation_id == conversation.id).delete()
+    db.delete(conversation)
+    db.commit()
+    return {"status": "deleted"}
 
 
 @app.post("/chat")
@@ -1013,11 +1097,14 @@ def chat_with_nova(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    user_message, ai_message = create_chat_turn(db, current_user, request.message, request.model)
+    user_message, ai_message = create_chat_turn(
+        db, current_user, request.message, request.model, request.conversation_id
+    )
     return {
         "userMessage": serialize_message(user_message),
         "aiMessage": serialize_message(ai_message),
         "reply": ai_message.text,
+        "conversationId": str(user_message.conversation_id),
     }
 
 
@@ -1036,25 +1123,31 @@ async def stream_chat_with_nova(
         ai_message = None
         collected_chunks = []
         try:
-            if FORCE_QUOTA_EXCEEDED and not get_active_subscription(current_user.id, db):
-                yield create_sse_event(
-                    "error",
-                    {
-                        "code": "quota_exceeded",
-                        "message": "Groq token limit reached. Upgrade billing or wait for your quota to reset.",
-                        "paymentUrl": PAYMENT_URL,
-                    },
-                )
-                return
-
+            conversation = get_or_create_conversation(
+                db, current_user, chat_request.conversation_id, clean_text
+            )
             history = (
                 db.query(Message)
-                .filter(Message.user_id == current_user.id)
+                .filter(
+                    Message.user_id == current_user.id,
+                    Message.conversation_id == conversation.id,
+                )
                 .order_by(Message.id.asc())
                 .all()
             )
-            user_message = Message(user_id=current_user.id, sender="user", text=clean_text)
-            ai_message = Message(user_id=current_user.id, sender="ai", text="")
+            user_message = Message(
+                user_id=current_user.id,
+                conversation_id=conversation.id,
+                sender="user",
+                text=clean_text,
+            )
+            ai_message = Message(
+                user_id=current_user.id,
+                conversation_id=conversation.id,
+                sender="ai",
+                text="",
+            )
+            conversation.updated_at = datetime.utcnow()
             db.add(user_message)
             db.add(ai_message)
             db.commit()
@@ -1066,12 +1159,14 @@ async def stream_chat_with_nova(
                 {
                     "message_id": str(ai_message.id),
                     "user_message_id": str(user_message.id),
+                    "conversation_id": str(conversation.id),
+                    "conversation_title": conversation.title,
                 },
             )
             yield create_sse_event(
                 "metadata",
                 {
-                    "model": resolve_groq_model(chat_request.model) if (AI_PROVIDER == "groq" or GROQ_API_KEY) else os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+                    "model": resolve_groq_model(chat_request.model) if (AI_PROVIDER == "groq" or (AI_PROVIDER != "gemini" and GROQ_API_KEY)) else os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
                 },
             )
 
@@ -1190,5 +1285,6 @@ def clear_chat_history(
     db: Session = Depends(get_db),
 ):
     db.query(Message).filter(Message.user_id == current_user.id).delete()
+    db.query(Conversation).filter(Conversation.user_id == current_user.id).delete()
     db.commit()
     return {"status": "cleared", "message": "Chat history cleared successfully"}

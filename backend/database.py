@@ -23,11 +23,22 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String, nullable=True)
 
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    title = Column(String, nullable=False, default="New chat")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
 class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True, nullable=True)
     sender = Column(String)  # 'user' or 'ai'
     text = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -64,5 +75,32 @@ def ensure_schema():
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE messages ADD COLUMN user_id INTEGER"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_messages_user_id ON messages (user_id)"))
+
+    message_columns = {column["name"] for column in inspect(engine).get_columns("messages")}
+    if "conversation_id" not in message_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE messages ADD COLUMN conversation_id INTEGER"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_messages_conversation_id ON messages (conversation_id)"))
+
+    # Keep old messages by placing each user's legacy history in one conversation.
+    with engine.begin() as connection:
+        legacy_users = connection.execute(
+            text("SELECT DISTINCT user_id FROM messages WHERE user_id IS NOT NULL AND conversation_id IS NULL")
+        ).fetchall()
+        for (user_id,) in legacy_users:
+            first_message = connection.execute(
+                text("SELECT text FROM messages WHERE user_id = :user_id AND conversation_id IS NULL ORDER BY id LIMIT 1"),
+                {"user_id": user_id},
+            ).scalar()
+            title = (first_message or "Previous chat").strip()[:60] or "Previous chat"
+            result = connection.execute(
+                text("INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (:user_id, :title, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"),
+                {"user_id": user_id, "title": title},
+            )
+            conversation_id = result.lastrowid
+            connection.execute(
+                text("UPDATE messages SET conversation_id = :conversation_id WHERE user_id = :user_id AND conversation_id IS NULL"),
+                {"conversation_id": conversation_id, "user_id": user_id},
+            )
 
 ensure_schema()

@@ -35,10 +35,9 @@ const RootNavigator = () => {
             })
           );
         }
-      } catch (e) {
+      } catch {
         await AsyncStorage.removeItem('userToken');
         await AsyncStorage.removeItem('user');
-        console.error('Failed to restore token', e);
       } finally {
         dispatch(setLoading(false));
       }
